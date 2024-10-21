@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 
-import 'package:flutter/material.dart';
 
 // Extension for navigation on BuildContext
 extension Navigation on BuildContext {
