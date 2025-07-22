@@ -15,7 +15,6 @@ class DocApp extends StatelessWidget {
       designSize: const Size(375, 812),
       child: MaterialApp(
         debugShowCheckedModeBanner: false,
-        title: 'First Method',
         theme: ThemeData(
           primaryColor: ColorManager.mainBlue,
           scaffoldBackgroundColor: Colors.white,
