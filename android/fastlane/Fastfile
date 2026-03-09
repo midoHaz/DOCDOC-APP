@@ -1,0 +1,23 @@
+default_platform(:android)
+
+# ============================================================
+# Run from the android/ directory:
+#   cd android
+#   bundle exec fastlane firebase_distribution
+# ============================================================
+
+platform :android do
+  desc "Lane for Android Firebase App Distribution"
+  lane :firebase_distribution do
+    # Run flutter commands from the project root (one level up)
+    sh "cd .. && flutter clean"
+    sh "cd .. && flutter build apk --release --flavor production --target lib/main_production.dart --no-tree-shake-icons"
+
+    firebase_app_distribution(
+      app: "1:282252830517:android:567f5b833b07e2e429ce7c",
+      service_credentials_file: "firebase-service-account.json",
+      android_artifact_path: "../build/app/outputs/flutter-apk/app-production-release.apk",
+      release_notes: "Testing with fastlane with firebase app distribution (first push with fastlane)",
+    )
+  end
+end
