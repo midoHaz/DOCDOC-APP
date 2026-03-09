@@ -41,3 +41,7 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Firebase / Fastlane secrets - never commit these!
+android/firebase-service-account.json
+**/firebase-service-account.json
