@@ -1,0 +1,241 @@
+# =============================================================================
+# Workflow Name: Android Fastlane + Firebase App Distribution
+# =============================================================================
+# Purpose:
+#   Automatically builds the Flutter Android app (production flavor) and
+#   distributes the APK to testers via Firebase App Distribution every time
+#   code is pushed to the master branch.
+#
+# Credentials strategy:
+#   Instead of a CLI token (FIREBASE_CLI_TOKEN), this project authenticates
+#   with Firebase using a Google Service Account JSON key file. The JSON file
+#   content is stored as a GitHub secret (FIREBASE_SERVICE_ACCOUNT_JSON) and
+#   written to disk at runtime so Fastlane can pick it up — just like it does
+#   when you run the lane locally.
+# =============================================================================
+
+name: Android – Fastlane Firebase App Distribution
+
+# ---------------------------------------------------------------------------
+# TRIGGER
+# ---------------------------------------------------------------------------
+# "on: push" means the workflow runs every time commits are pushed.
+# We restrict it to the "master" branch so that feature-branch pushes and
+# pull-request source branches do NOT trigger a distribution build.
+# This follows the Flutter community convention of only distributing from
+# a single source-of-truth branch.
+# ---------------------------------------------------------------------------
+on:
+  push:
+    branches:
+      - master        # Only run when code lands on master
+
+# ---------------------------------------------------------------------------
+# CONCURRENCY
+# ---------------------------------------------------------------------------
+# If two pushes arrive before the first workflow finishes, we cancel the
+# older run and only keep the newest one. This prevents:
+#   • Wasted CI minutes on stale builds
+#   • Race conditions uploading two APKs to Firebase
+# The group name is unique per workflow + branch combination.
+# ---------------------------------------------------------------------------
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# ---------------------------------------------------------------------------
+# JOBS
+# ---------------------------------------------------------------------------
+jobs:
+  distribute_to_firebase:
+
+    # -------------------------------------------------------------------------
+    # RUNNER
+    # -------------------------------------------------------------------------
+    # We use ubuntu-latest because:
+    #   1. Android SDK / Gradle runs fine on Linux.
+    #   2. Linux runners are faster and cheaper than macOS on GitHub Actions.
+    #   3. iOS distribution is the only case where macOS runners are required.
+    # -------------------------------------------------------------------------
+    runs-on: ubuntu-latest
+
+    steps:
+
+      # -----------------------------------------------------------------------
+      # STEP 1 – Checkout source code
+      # -----------------------------------------------------------------------
+      # actions/checkout@v4 (latest stable) clones the repository into the
+      # runner workspace so all subsequent steps can work with our code.
+      # We use fetch-depth: 0 to get full git history, which is useful for
+      # changelog generation and version-bump tools later.
+      # -----------------------------------------------------------------------
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # Full history; omit this line if you don't need it
+
+      # -----------------------------------------------------------------------
+      # STEP 2 – Set up Java (JDK)
+      # -----------------------------------------------------------------------
+      # The Android Gradle Plugin requires a JDK. We pin to JDK 17 because:
+      #   • AGP 8.x (the current default) requires JDK 17 at minimum.
+      #   • JDK 11 (used in the reference snippet) works with older AGP but
+      #     is approaching EOL; 17 is the current LTS release.
+      # Distribution "temurin" is the community-driven Eclipse Adoptium build
+      # — the standard choice in Flutter CI setups.
+      # -----------------------------------------------------------------------
+      - name: ☕ Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      # -----------------------------------------------------------------------
+      # STEP 3 – Cache Gradle dependencies
+      # -----------------------------------------------------------------------
+      # Gradle downloads dozens of MBs of dependencies on first run.
+      # Caching the ~/.gradle folder means subsequent runs skip most of that
+      # download, cutting several minutes off each build.
+      # The cache key changes only when build.gradle files change, so it is
+      # invalidated exactly when the dependency set may have changed.
+      # -----------------------------------------------------------------------
+      - name: 📦 Cache Gradle packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      # -----------------------------------------------------------------------
+      # STEP 4 – Install Flutter
+      # -----------------------------------------------------------------------
+      # subosito/flutter-action@v2 is the official community action for
+      # Flutter CI. We use:
+      #   channel: stable  →  production-grade, well-tested Flutter SDK
+      #   cache: true      →  caches the Flutter SDK between runs so we don't
+      #                       re-download it from scratch every time (~600 MB)
+      # If your project requires a specific Flutter version pin it here with:
+      #   flutter-version: '3.x.x'
+      # -----------------------------------------------------------------------
+      - name: 🐦 Install Flutter (stable channel)
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true           # SDK is cached between workflow runs
+
+      # -----------------------------------------------------------------------
+      # STEP 5 – Cache Flutter pub packages
+      # -----------------------------------------------------------------------
+      # flutter pub get can take 30-60 s on cold runs. Caching the pub cache
+      # directory means only new or changed packages are downloaded.
+      # -----------------------------------------------------------------------
+      - name: 📦 Cache Flutter pub cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.pub-cache
+          key: ${{ runner.os }}-pub-${{ hashFiles('**/pubspec.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-pub-
+
+      # -----------------------------------------------------------------------
+      # STEP 6 – Install Flutter dependencies
+      # -----------------------------------------------------------------------
+      # "flutter pub get" reads pubspec.yaml and downloads all Dart/Flutter
+      # packages the project depends on. This must happen before any flutter
+      # build command is run.
+      # -----------------------------------------------------------------------
+      - name: 🔧 Install Flutter dependencies
+        run: flutter pub get
+
+      # -----------------------------------------------------------------------
+      # STEP 7 – Set up Ruby
+      # -----------------------------------------------------------------------
+      # Fastlane is a Ruby gem, so we need a Ruby environment.
+      # ruby/setup-ruby@v1 handles Ruby version management cleanly.
+      #
+      #   ruby-version: "3.3"   →  latest stable Ruby; compatible with
+      #                             Fastlane 2.x and all our plugins.
+      #   bundler-cache: true   →  automatically runs "bundle install" AND
+      #                             caches the installed gems, so we don't
+      #                             re-install Fastlane on every run.
+      #   working-directory: android →  we use the Gemfile inside android/
+      #                             because that is where Fastlane lives.
+      # -----------------------------------------------------------------------
+      - name: 💎 Set up Ruby & install Fastlane gems
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+          bundler-cache: true       # Runs bundle install + caches gems
+          working-directory: android
+
+      # -----------------------------------------------------------------------
+      # STEP 8 – Write the Firebase Service Account JSON to disk
+      # -----------------------------------------------------------------------
+      # Our Fastfile authenticates with Firebase using a service-account JSON
+      # key file (firebase-service-account.json) rather than an OAuth token.
+      # We NEVER commit this file to git (it's in .gitignore).
+      #
+      # Instead, the entire JSON content is stored as the GitHub secret
+      # FIREBASE_SERVICE_ACCOUNT_JSON. Here we write it to the exact path
+      # that Fastlane expects: android/firebase-service-account.json
+      #
+      # Why this approach?
+      #   • Service accounts are the Google-recommended way to authenticate
+      #     server-to-server without user interaction.
+      #   • Storing the raw JSON in a secret is safe — GitHub encrypts
+      #     secrets at rest and masks them in log output.
+      #   • Writing to a file keeps Fastlane's local and CI configuration
+      #     identical, so the same Fastfile works in both environments.
+      # -----------------------------------------------------------------------
+      - name: 🔑 Write Firebase Service Account JSON from secret
+        env:
+          FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
+        run: |
+          # Print the secret into the file Fastlane reads.
+          # The file is created inside android/ to match the path defined
+          # in android/fastlane/Fastfile:
+          #   service_credentials_file: "firebase-service-account.json"
+          echo "$FIREBASE_SERVICE_ACCOUNT_JSON" > android/firebase-service-account.json
+
+      # -----------------------------------------------------------------------
+      # STEP 9 – Run Fastlane: build APK + distribute to Firebase
+      # -----------------------------------------------------------------------
+      # This single step triggers the entire Fastlane lane defined in
+      # android/fastlane/Fastfile:
+      #
+      #   lane :firebase_distribution do
+      #     sh "cd .. && flutter clean"
+      #     sh "cd .. && flutter build apk --release --flavor production ..."
+      #     firebase_app_distribution(...)
+      #   end
+      #
+      # Why "bundle exec fastlane"?
+      #   "bundle exec" ensures we use the exact gem versions pinned in
+      #   android/Gemfile.lock rather than whatever global gems happen to be
+      #   installed on the runner. This guarantees reproducible builds.
+      #
+      # working-directory: android
+      #   Fastlane must be run from the android/ directory because the
+      #   Gemfile, Fastfile, and service-account JSON are all relative to it.
+      # -----------------------------------------------------------------------
+      - name: 🚀 Build APK & Distribute via Fastlane → Firebase
+        run: bundle exec fastlane android firebase_distribution
+        working-directory: android
+
+      # -----------------------------------------------------------------------
+      # STEP 10 – Clean up the service account file
+      # -----------------------------------------------------------------------
+      # After the distribution step we delete the service-account JSON from the
+      # runner's disk. This is a security best practice (defense-in-depth):
+      # even though GitHub Actions ephemeral runners are destroyed after each
+      # job, removing the credential immediately limits any theoretical
+      # exposure window.
+      # "if: always()" ensures the cleanup runs even if a previous step fails,
+      # so the file is never left behind regardless of build outcome.
+      # -----------------------------------------------------------------------
+      - name: 🧹 Remove Firebase Service Account JSON
+        if: always()
+        run: rm -f android/firebase-service-account.json

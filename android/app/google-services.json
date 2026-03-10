@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "282252830517",
+    "project_id": "docdoc-app-distribution-a2a5d",
+    "storage_bucket": "docdoc-app-distribution-a2a5d.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:282252830517:android:567f5b833b07e2e429ce7c",
+        "android_client_info": {
+          "package_name": "com.example.advanced_sessions"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyB13x3wPo1lfftZXch0bk3k0W72kxATcW0"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:282252830517:android:567f5b833b07e2e429ce7c",
+        "android_client_info": {
+          "package_name": "com.example.advanced_sessions.dev"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyB13x3wPo1lfftZXch0bk3k0W72kxATcW0"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
