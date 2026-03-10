@@ -17,7 +17,7 @@ platform :android do
       app: "1:282252830517:android:567f5b833b07e2e429ce7c",
       service_credentials_file: "firebase-service-account.json",
       android_artifact_path: "../build/app/outputs/flutter-apk/app-production-release.apk",
-      release_notes: "Testing with fastlane with firebase app distribution (first push with fastlane)",
+      release_notes: "v1.0.3 – GitHub Actions CI/CD pipeline live 🚀 Automated build & Firebase App Distribution via Fastlane.",
     )
   end
 end
